@@ -257,6 +257,32 @@ describe("Graph Functions", () => {
     expect(edges[0].sourceObservationIds).toEqual(["obs_1", "obs_2"]);
   });
 
+  it("graph-build skips observations that already contributed graph records", async () => {
+    await kv.set("mem:sessions", testSession.id, testSession);
+    await kv.set("mem:obs:ses_1", testObs.id, testObs);
+    await kv.set("mem:obs:ses_1", secondObs.id, secondObs);
+
+    await sdk.trigger("mem::graph-build", {
+      dryRun: false,
+      batchSize: 1,
+      limit: 2,
+    });
+
+    const result = (await sdk.trigger("mem::graph-build", {
+      batchSize: 1,
+    })) as {
+      dryRun: boolean;
+      observationsEligible: number;
+      observationsSkippedExisting: number;
+      observationsSelected: number;
+    };
+
+    expect(result.dryRun).toBe(true);
+    expect(result.observationsEligible).toBe(0);
+    expect(result.observationsSkippedExisting).toBe(2);
+    expect(result.observationsSelected).toBe(0);
+  });
+
   it("graph-build includes latest memories by default", async () => {
     await kv.set("mem:memories", testMemory.id, testMemory);
 

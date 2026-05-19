@@ -142,6 +142,7 @@ Commands:
                      Defaults to dry-run. Use --apply to write graph nodes/edges.
                      --source observations|memories|all --batch-size <N>
                      --session-id <id> --limit <N> --offset <N>
+                     Apply without --limit/--offset resumes in chunks to avoid long request timeouts.
 
 Options:
   --help, -h         Show this help
@@ -2480,7 +2481,7 @@ async function runGraphBuild(): Promise<void> {
   const spinner = p.spinner();
   spinner.start(dryRun ? "planning graph backfill" : "building graph");
   try {
-    const result = await postJsonStrict<{
+    type GraphBuildCliResult = {
       success?: boolean;
       dryRun?: boolean;
       source?: string;
@@ -2497,7 +2498,61 @@ async function runGraphBuild(): Promise<void> {
       nodesAdded?: number;
       edgesAdded?: number;
       errors?: Array<{ batch: number; error: string }>;
-    }>(`${base}/agentmemory/graph/build`, body, 120_000);
+    };
+    let result: GraphBuildCliResult | null;
+    if (
+      !dryRun &&
+      limit === undefined &&
+      offset === undefined &&
+      !sessionId &&
+      !args.includes("--force")
+    ) {
+      const chunkLimit = 20;
+      let chunk = 0;
+      let totalSelected = 0;
+      let totalBatchesPlanned = 0;
+      let totalBatchesProcessed = 0;
+      let totalNodesAdded = 0;
+      let totalEdgesAdded = 0;
+      let last: GraphBuildCliResult | null = null;
+      let failure: GraphBuildCliResult | null = null;
+      for (;;) {
+        chunk++;
+        spinner.message(`building graph chunk ${chunk}`);
+        const next = await postJsonStrict<GraphBuildCliResult>(
+          `${base}/agentmemory/graph/build`,
+          { ...body, limit: chunkLimit },
+          300_000,
+        );
+        if (!next?.success) {
+          failure = next;
+          break;
+        }
+        last = next;
+        totalSelected += next.observationsSelected ?? 0;
+        totalBatchesPlanned += next.batchesPlanned ?? 0;
+        totalBatchesProcessed += next.batchesProcessed ?? 0;
+        totalNodesAdded += next.nodesAdded ?? 0;
+        totalEdgesAdded += next.edgesAdded ?? 0;
+        if ((next.observationsSelected ?? 0) === 0) break;
+      }
+      result = failure ?? (last
+        ? {
+            ...last,
+            observationsSelected: totalSelected,
+            batchesPlanned: totalBatchesPlanned,
+            batchesProcessed: totalBatchesProcessed,
+            nodesAdded: totalNodesAdded,
+            edgesAdded: totalEdgesAdded,
+          }
+        : null);
+    } else {
+      result = await postJsonStrict<GraphBuildCliResult>(
+        `${base}/agentmemory/graph/build`,
+        body,
+        dryRun ? 120_000 : 300_000,
+      );
+    }
     spinner.stop(dryRun ? "plan ready" : "build finished");
 
     if (!result?.success) {
