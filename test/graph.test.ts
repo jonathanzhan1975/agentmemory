@@ -283,6 +283,73 @@ describe("Graph Functions", () => {
     expect(result.observationsSelected).toBe(0);
   });
 
+  it("graph-build treats successful zero-output graph extraction audit as processed", async () => {
+    mockProvider.compress.mockResolvedValueOnce(
+      "<entities></entities><relationships></relationships>",
+    );
+    await kv.set("mem:sessions", testSession.id, testSession);
+    await kv.set("mem:obs:ses_1", testObs.id, testObs);
+
+    const applyResult = (await sdk.trigger("mem::graph-build", {
+      dryRun: false,
+      batchSize: 1,
+      limit: 1,
+    })) as {
+      success: boolean;
+      batchesProcessed: number;
+      nodesAdded: number;
+      edgesAdded: number;
+    };
+
+    expect(applyResult.success).toBe(true);
+    expect(applyResult.batchesProcessed).toBe(1);
+    expect(applyResult.nodesAdded).toBe(0);
+    expect(applyResult.edgesAdded).toBe(0);
+
+    const result = (await sdk.trigger("mem::graph-build", {
+      batchSize: 1,
+    })) as {
+      dryRun: boolean;
+      observationsEligible: number;
+      observationsSkippedExisting: number;
+      observationsSelected: number;
+    };
+
+    expect(result.dryRun).toBe(true);
+    expect(result.observationsEligible).toBe(0);
+    expect(result.observationsSkippedExisting).toBe(1);
+    expect(result.observationsSelected).toBe(0);
+  });
+
+  it("graph-build force bypasses audit-derived processed source ids", async () => {
+    mockProvider.compress.mockResolvedValueOnce(
+      "<entities></entities><relationships></relationships>",
+    );
+    await kv.set("mem:sessions", testSession.id, testSession);
+    await kv.set("mem:obs:ses_1", testObs.id, testObs);
+
+    await sdk.trigger("mem::graph-build", {
+      dryRun: false,
+      batchSize: 1,
+      limit: 1,
+    });
+
+    const result = (await sdk.trigger("mem::graph-build", {
+      batchSize: 1,
+      force: true,
+    })) as {
+      dryRun: boolean;
+      observationsEligible: number;
+      observationsSkippedExisting: number;
+      observationsSelected: number;
+    };
+
+    expect(result.dryRun).toBe(true);
+    expect(result.observationsEligible).toBe(1);
+    expect(result.observationsSkippedExisting).toBe(0);
+    expect(result.observationsSelected).toBe(1);
+  });
+
   it("graph-build includes latest memories by default", async () => {
     await kv.set("mem:memories", testMemory.id, testMemory);
 

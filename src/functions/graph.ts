@@ -7,6 +7,7 @@ import type {
   MemoryProvider,
   Session,
   Memory,
+  AuditEntry,
 } from "../types.js";
 import { KV, generateId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
@@ -71,6 +72,7 @@ function isEligibleObservation(value: unknown): value is CompressedObservation {
 function collectProcessedSourceIds(
   nodes: GraphNode[],
   edges: GraphEdge[],
+  auditEntries: AuditEntry[] = [],
 ): Set<string> {
   const ids = new Set<string>();
   for (const node of nodes) {
@@ -78,6 +80,15 @@ function collectProcessedSourceIds(
   }
   for (const edge of edges) {
     for (const id of edge.sourceObservationIds || []) ids.add(id);
+  }
+  for (const entry of auditEntries) {
+    if (entry.operation !== "observe") continue;
+    if (entry.functionId !== "mem::graph-extract") continue;
+    if (typeof entry.details?.["nodesExtracted"] !== "number") continue;
+    if (typeof entry.details?.["edgesExtracted"] !== "number") continue;
+    for (const id of entry.targetIds || []) {
+      if (typeof id === "string" && id.length > 0) ids.add(id);
+    }
   }
   return ids;
 }
@@ -177,9 +188,12 @@ export function registerGraphFunction(
 
       const existingNodes = await kv.list<GraphNode>(KV.graphNodes);
       const existingEdges = await kv.list<GraphEdge>(KV.graphEdges);
+      const graphExtractAudit = force
+        ? []
+        : await kv.list<AuditEntry>(KV.audit).catch(() => []);
       const processedIds = force
         ? new Set<string>()
-        : collectProcessedSourceIds(existingNodes, existingEdges);
+        : collectProcessedSourceIds(existingNodes, existingEdges, graphExtractAudit);
 
       const observations: CompressedObservation[] = [];
       let sessionsScanned = 0;
